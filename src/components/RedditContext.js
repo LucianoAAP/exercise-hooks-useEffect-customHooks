@@ -1,4 +1,4 @@
-import React, { Component, createContext } from 'react';
+import React, { createContext, useEffect, useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
 
 import { getPostsBySubreddit } from '../services/redditAPI';
@@ -6,128 +6,84 @@ import { getPostsBySubreddit } from '../services/redditAPI';
 const Context = createContext();
 const { Provider, Consumer } = Context;
 
-class RedditProvider extends Component {
-  constructor(props) {
-    super(props);
+const RedditProvider = ({ children }) => {
+  const [selectedSubreddit, setSubreddit] = useState('reactjs');
+  const [shouldRefreshSubreddit, setShouldRefresh] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
+  const [postsBySubreddit, setPostsBySubreddit] = useState({ frontend: {}, reactjs: {} });
 
-    this.state = {
-      postsBySubreddit: {
-        frontend: {},
-        reactjs: {},
-      },
-      selectedSubreddit: 'reactjs',
-      shouldRefreshSubreddit: false,
-      isFetching: false,
-    };
-
-    this.fetchPosts = this.fetchPosts.bind(this);
-    this.shouldFetchPosts = this.shouldFetchPosts.bind(this);
-    this.handleFetchSuccess = this.handleFetchSuccess.bind(this);
-    this.handleFetchError = this.handleFetchError.bind(this);
-    this.handleSubredditChange = this.handleSubredditChange.bind(this);
-    this.handleRefreshSubreddit = this.handleRefreshSubreddit.bind(this);
-  }
-
-  componentDidUpdate(_prevProps, prevState) {
-    const { state } = this;
-    const { shouldRefreshSubreddit } = state;
-    const selectedSubredditChanged = prevState.selectedSubreddit !== state.selectedSubreddit;
-
-    if (selectedSubredditChanged || shouldRefreshSubreddit) {
-      this.fetchPosts();
-    }
-  }
-
-  fetchPosts() {
-    if (!this.shouldFetchPosts()) return;
-
-    this.setState({
-      shouldRefreshSubreddit: false,
-      isFetching: true,
-    });
-
-    const { selectedSubreddit } = this.state;
-    getPostsBySubreddit(selectedSubreddit)
-      .then(this.handleFetchSuccess, this.handleFetchError);
-  }
-
-  shouldFetchPosts() {
-    const {
-      selectedSubreddit,
-      postsBySubreddit,
-      shouldRefreshSubreddit,
-      isFetching,
-    } = this.state;
+  const shouldFetchPosts = useCallback(() => {
     const posts = postsBySubreddit[selectedSubreddit];
 
     if (!posts.items) return true;
     if (isFetching) return false;
     return shouldRefreshSubreddit;
-  }
+  }, [isFetching, postsBySubreddit, selectedSubreddit, shouldRefreshSubreddit]);
 
-  handleFetchSuccess(json) {
+  const handleFetchSuccess = useCallback((json) => {
     const lastUpdated = Date.now();
     const items = json.data.children.map((child) => child.data);
 
-    this.setState((state) => {
-      const newState = {
-        ...state,
-        shouldRefreshSubreddit: false,
-        isFetching: false,
-      };
-
-      newState.postsBySubreddit[state.selectedSubreddit] = {
-        items,
-        lastUpdated,
-      };
-
-      return newState;
-    });
-  }
-
-  handleFetchError(error) {
-    this.setState((state) => {
-      const newState = {
-        ...state,
-        shouldRefreshSubreddit: false,
-        isFetching: false,
-      };
-
-      newState.postsBySubreddit[state.selectedSubreddit] = {
-        error: error.message,
-        items: [],
-      };
-
-      return newState;
-    });
-  }
-
-  handleSubredditChange(selectedSubreddit) {
-    this.setState({ selectedSubreddit });
-  }
-
-  handleRefreshSubreddit() {
-    this.setState({ shouldRefreshSubreddit: true });
-  }
-
-  render() {
-    const { children } = this.props;
-    const { selectedSubreddit, postsBySubreddit } = this.state;
-    const context = {
-      ...this.state,
-      selectSubreddit: this.handleSubredditChange,
-      fetchPosts: this.fetchPosts,
-      refreshSubreddit: this.handleRefreshSubreddit,
-      availableSubreddits: Object.keys(postsBySubreddit),
-      posts: postsBySubreddit[selectedSubreddit].items,
+    setShouldRefresh(false);
+    setIsFetching(false);
+    const newPostsBySubreddit = { ...postsBySubreddit };
+    newPostsBySubreddit[selectedSubreddit] = {
+      items,
+      lastUpdated,
     };
+    setPostsBySubreddit(newPostsBySubreddit);
+  }, [postsBySubreddit, selectedSubreddit]);
 
-    return (
-      <Provider value={context}>
-        {children}
-      </Provider>
-    );
+  const handleFetchError = useCallback((error) => {
+    setShouldRefresh(false);
+    setIsFetching(false);
+    const newPostsBySubreddit = { ...postsBySubreddit };
+    newPostsBySubreddit[selectedSubreddit] = {
+      error: error.message,
+      items: [],
+    };
+    setPostsBySubreddit(newPostsBySubreddit);
+  }, [postsBySubreddit, selectedSubreddit]);
+
+  const fetchPosts = useCallback(() => {
+    if (!shouldFetchPosts()) return;
+
+    setShouldRefresh(false);
+    setIsFetching(true);
+
+    getPostsBySubreddit(selectedSubreddit)
+      .then(handleFetchSuccess, handleFetchError);
+  }, [handleFetchSuccess, handleFetchError, selectedSubreddit, shouldFetchPosts]);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [selectedSubreddit, shouldRefreshSubreddit, fetchPosts]);
+
+  const handleSubredditChange = (selectedSubreddit) => {
+    setSubreddit(selectedSubreddit);
   }
+
+  const handleRefreshSubreddit = () => {
+    setShouldRefresh(true);
+  }
+
+  const context = {
+    selectedSubreddit,
+    postsBySubreddit,
+    shouldRefreshSubreddit,
+    isFetching,
+    selectSubreddit: handleSubredditChange,
+    fetchPosts: fetchPosts,
+    refreshSubreddit: handleRefreshSubreddit,
+    availableSubreddits: Object.keys(postsBySubreddit),
+    posts: postsBySubreddit[selectedSubreddit].items,
+  };
+
+  return (
+    <Provider value={context}>
+      {children}
+    </Provider>
+  );
 }
 
 RedditProvider.propTypes = {
